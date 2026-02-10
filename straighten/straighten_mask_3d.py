@@ -8,6 +8,8 @@
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 import os
+import argparse
+import pandas as pd
 import numpy as np
 import nibabel as nib
 from PIL import Image
@@ -528,7 +530,9 @@ def process_mask3d(ct_path,label_path,json_path,vertebrae_ids,output_folder,outp
         # 这里要注意，不嫩那个把所有的json文件中的坐标都输进去，
         # 因为部分坐标是不需要的，要根据label取
         for entry in data:  # Skip the first entry which is 'direction'
-            if entry['label'] == None:
+            if not isinstance(entry, dict) or 'label' not in entry:
+                continue
+            if entry['label'] is None:
                 continue
             if entry['label'] == label:
                 centroid = (entry['X'], entry['Y'], entry['Z'])
@@ -571,6 +575,129 @@ def parse_json(json_path):
         data = json.load(file)
     return data
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Straighten Vertebrae and Extract 3D Volumes')
+    parser.add_argument('--dataset_csv', type=str, default=None,
+                        help='Path to CSV file containing dataset paths (columns: image_path, mask_path, centroid_json_path)')
+    parser.add_argument('--data_folder', type=str, default=None,
+                        help='Root folder of the dataset (if not using CSV)')
+    parser.add_argument('--json_path', type=str, default=None,
+                        help='Path to vertebrae data JSON file (if not using CSV)')
+    parser.add_argument('--output_folder', type=str, required=True,
+                        help='Output directory for straightened volumes')
+    parser.add_argument('--dataset_mount', type=str, default=None,
+                        help='Optional: Root path to override the dataset location in CSV (e.g. /kaggle/input/verse2019)')
+    return parser.parse_args()
+
+def rebase_path(path, new_root):
+    if not isinstance(path, str):
+        return None
+    if not new_root:
+        return path
+    
+    # Normalize separators
+    path = path.replace('\\', '/')
+    new_root = new_root.replace('\\', '/')
+    
+    # Strategies to find the relative part
+    # 1. Look for standard VerSe folder keywords
+    keywords = ['dataset-verse19training', 'dataset-verse19validation', 'dataset-verse19test', 
+                'rawdata', 'derivatives']
+    
+    parts = path.split('/')
+    for keyword in keywords:
+        if keyword in parts:
+            try:
+                idx = parts.index(keyword)
+                rel_path = '/'.join(parts[idx:])
+                return os.path.join(new_root, rel_path)
+            except ValueError:
+                continue
+                
+    # 2. As a fallback, try to just append the filename to the root (recursive search is too slow here)
+    # But maybe the user mapped it directly to the folder containing rawdata?
+    # Let's try to see if 'rawdata' or 'derivatives' is in the path even if the parent folder isn't standard
+    if 'rawdata' in parts:
+         idx = parts.index('rawdata')
+         # If the new root already contains 'rawdata', handled by user? No, assume user gives root of dataset
+         rel_path = '/'.join(parts[idx:])
+         return os.path.join(new_root, rel_path)
+         
+    if 'derivatives' in parts:
+         idx = parts.index('derivatives')
+         rel_path = '/'.join(parts[idx:])
+         return os.path.join(new_root, rel_path)
+         
+    return path
+
+def process_data_from_csv(csv_path, output_folder, dataset_mount=None):
+    """
+    Processes data based on paths provided in a CSV file.
+    """
+    df = pd.read_csv(csv_path)
+    
+    # Check if required columns exist
+    required_columns = ['image_path', 'mask_path', 'centroid_json_path']
+    for col in required_columns:
+        if col not in df.columns:
+            raise ValueError(f"CSV must contain column: {col}")
+
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    for index, row in df.iterrows():
+        ct_path = rebase_path(row['image_path'], dataset_mount)
+        mask_path = rebase_path(row['mask_path'], dataset_mount)
+        json_path = rebase_path(row['centroid_json_path'], dataset_mount)
+        
+        # Skip if necessary paths are missing/None
+        if not ct_path or not json_path:
+            continue
+            
+        # Infer patient_id
+        basename = os.path.basename(ct_path)
+        if '_ct.nii' in basename:
+            patient_id = basename.replace('_ct.nii', '').replace('_ct.nii.gz', '')
+        else:
+            patient_id = os.path.splitext(os.path.splitext(basename)[0])[0]
+
+        # mask_path is allowed to be None/Missing if not strictly required by downstream?
+        # Actually process_mask3d uses label_path (mask_path), so it must exist.
+        if ct_path and mask_path and json_path and os.path.exists(ct_path) and os.path.exists(mask_path) and os.path.exists(json_path):
+            print(f"Processing {patient_id}: CT at {ct_path}")
+            
+            try:
+                with open(json_path, 'r') as f:
+                    data = json.load(f)
+                    # Extract 'label' from list of dicts or handle dictionary format
+                    if isinstance(data, list):
+                        vertebrae_ids = [entry['label'] for entry in data if isinstance(entry, dict) and 'label' in entry and entry['label'] is not None]
+                    elif isinstance(data, dict):
+                         # Handle format from build_patient_vertebrae_map if logic differs, 
+                         # but usually JSON per patient is a list of centroids.
+                         # If it is the global json style:
+                         pass 
+                         # For now assuming centroid json format which is usually a list of dicts
+                         vertebrae_ids = [entry['label'] for entry in data if 'label' in entry]
+                    else:
+                        vertebrae_ids = []
+
+                if not vertebrae_ids:
+                    print(f"No vertebrae labels found in {json_path}")
+                    continue
+
+                process_mask3d(ct_path, mask_path, json_path, vertebrae_ids, output_folder, (256,256,64))
+            except Exception as e:
+                print(f"Error processing {patient_id}: {e}")
+        else:
+            # Debug info
+            print(f"Files for patient {patient_id} not found:")
+            print(f"  CT: {ct_path} ({'Found' if os.path.exists(ct_path) else 'Missing'})")
+            # Only print others if CT is missing to reduce noise, or print all if any missing
+            if not os.path.exists(mask_path): print(f"  Mask: {mask_path} (Missing)")
+            if not os.path.exists(json_path): print(f"  JSON: {json_path} (Missing)")
+            print(f"Files for patient {patient_id} not found: {ct_path}, {mask_path}, {json_path}")
+
 def process_data(data_folder, data, output_folder):
     """
     Processes the specified vertebrae for each patient based on a dictionary structure.
@@ -581,15 +708,7 @@ def process_data(data_folder, data, output_folder):
             #跳过存在错误的文件
             if patient_id=="120245_series10":
                continue
-            #if patient_id!="0020":
-            #   continue
             
-            # 直接跳过前面的文件到目标错误文件进行纠错
-            #if not found:
-            #    if patient_id=="YANG-CUI-YING_series0":
-            #        found = True
-            #    else:
-            #        continue  # 跳过所有直到找到 start_file 的循环
             ct_path = os.path.join(data_folder, category, patient_id, patient_id + '.nii.gz')
             mask_path = os.path.join(data_folder, category, patient_id, patient_id + '_msk.nii.gz')
             json_path = os.path.join(data_folder, category, patient_id, patient_id + '.json')
@@ -601,22 +720,10 @@ def process_data(data_folder, data, output_folder):
             if not os.path.exists(ct_path):
                 ct_path = find_largest_file(os.path.join(data_folder, patient_id))
             
-            file_size_mb = os.path.getsize(ct_path) / (1024 * 1024)
-            max_file_size_mb = 500
-            #if file_size_mb > max_file_size_mb:
-            #    print(patient_id)
-            #    continue
-
-            
             if os.path.exists(ct_path) and os.path.exists(mask_path) and os.path.exists(json_path):
                 print(f"Processing {patient_id}: CT at {ct_path}, mask at {mask_path}, json at {json_path}")
                 print(f"Vertebrae IDs: {vertebrae_ids}")
-                # Here you would call your processing function with the vertebra IDs
-                #try:
                 process_mask3d(ct_path, mask_path, json_path, vertebrae_ids, output_folder, (256,256,64))
-                #except:
-                #    print("error",patient_id)
-                #    continue
             else:
                 print(f"Files for patient {patient_id} not found.")
 
@@ -649,25 +756,16 @@ def build_patient_vertebrae_map(json_path):
 
     return category_patient_vertebrae_map
 
-# Example usage
-#data_folder = '/home/zhangqi/environments/Genant_classify/data/revised'  # Update with the actual path to your data
-#json_path = '/home/zhangqi/environments/code/vertebra_data.json'  # Path to the JSON file you've uploaded
-#output_folder = '/home/zhangqi/environments/data/straighten/revised'  # Update with the path where you want to save outputs
+if __name__ == "__main__":
+    args = parse_args()
 
-data_folder = '/mnt/g/local_dataset/preprocessed/local'  # Update with the actual path to your data
-json_path = '/mnt/g/local_dataset/preprocessed/vertebra_data.json'  # Path to the JSON file you've uploaded
-output_folder = '/mnt/g/local_dataset/preprocessed/straighten'  # Update with the path where you want to save outputs
+    if not os.path.exists(args.output_folder):
+        os.makedirs(args.output_folder)
 
-#data_folder = '/mnt/g/six_local_dataset/local'  # Update with the actual path to your data
-#json_path = '/mnt/g/six_local_dataset/vertebra_data.json'  # Path to the JSON file you've uploaded
-#output_folder = '/mnt/g/six_local_dataset/straighten'  # Update with the path where you want to save outputs
-
-category_patient_vertebrae_map = build_patient_vertebrae_map(json_path)
-
-# Display the map for demonstration
-for category, patients in category_patient_vertebrae_map.items():
-    print(f"Category: {category}")
-    for patient_id, vertebrae_ids in patients.items():
-        print(f"  Patient ID: {patient_id}, Vertebrae IDs: {vertebrae_ids}")
-
-process_data(data_folder,category_patient_vertebrae_map,output_folder)
+    if args.dataset_csv:
+        process_data_from_csv(args.dataset_csv, args.output_folder, args.dataset_mount)
+    elif args.data_folder and args.json_path:
+        category_patient_vertebrae_map = build_patient_vertebrae_map(args.json_path)
+        process_data(args.data_folder, category_patient_vertebrae_map, args.output_folder)
+    else:
+        print("Error: Either --dataset_csv OR (--data_folder AND --json_path) must be provided.")

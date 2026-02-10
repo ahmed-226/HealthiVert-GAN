@@ -241,23 +241,30 @@ def process_nii_files(folder_path,CAM_folder, model, output_folder, device):
             count+=1
             
 
-def main():
-    model_path = '/home/zhangqi/Project/pytorch-CycleGAN-and-pix2pix-master/checkpoints/0421_adaptive_sagittal/latest_net_G.pth'
-    netG_params = {'input_dim': 1, 'ngf': 16}
-    #folder_path = '/home/zhangqi/Project/pytorch-CycleGAN-and-pix2pix-master/datasets/straighten/revised/CT'
-    #CAM_folder = '/home/zhangqi/Project/VertebralFractureGrading/heatmap/straighten_sagittal/binaryclass_1'
-    #output_folder = '/home/zhangqi/Project/pytorch-CycleGAN-and-pix2pix-master/output_3d/sagittal/fine'
-    folder_path = '/home/zhangqi/Project/pytorch-CycleGAN-and-pix2pix-master/datasets/local/straighten/CT'
-    CAM_folder = '/home/zhangqi/Project/VertebralFractureGrading/heatmap/local_sagittal_0508/binaryclass_1'
-    output_folder = '/home/zhangqi/Project/pytorch-CycleGAN-and-pix2pix-master/output_3d/local_dataset/sagittal/fine'
-    if not os.path.exists(output_folder+'/CT_fake'):
-        os.makedirs(output_folder+'/CT_fake')
-    if not os.path.exists(output_folder+'/label_fake'):
-        os.makedirs(output_folder+'/label_fake')
-    device = 'cuda:0'
+import argparse
 
-    model = load_model(model_path, netG_params, device)
-    process_nii_files(folder_path,CAM_folder, model, output_folder, device)
+def parse_args():
+    parser = argparse.ArgumentParser(description='Run HealthiVert-GAN Inference (Two-Stage)')
+    parser.add_argument('--model_path', type=str, required=True, help='Path to generator checkpoint (e.g. latest_net_G.pth)')
+    parser.add_argument('--input_ct_folder', type=str, required=True, help='Path to straightened CT folder')
+    parser.add_argument('--input_cam_folder', type=str, required=True, help='Path to attention heatmaps folder')
+    parser.add_argument('--output_folder', type=str, required=True, help='Output directory for generated results')
+    parser.add_argument('--netG_ngf', type=int, default=16, help='Number of generator filters (ngf)')
+    parser.add_argument('--device', type=str, default='cuda:0', help='Device to use (cuda:0 or cpu)')
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
+    
+    netG_params = {'input_dim': 1, 'ngf': args.netG_ngf}
+    
+    if not os.path.exists(os.path.join(args.output_folder, 'CT_fake')):
+        os.makedirs(os.path.join(args.output_folder, 'CT_fake'))
+    if not os.path.exists(os.path.join(args.output_folder, 'label_fake')):
+        os.makedirs(os.path.join(args.output_folder, 'label_fake'))
+
+    model = load_model(args.model_path, netG_params, args.device)
+    process_nii_files(args.input_ct_folder, args.input_cam_folder, model, args.output_folder, args.device)
 
 if __name__ == "__main__":
     main()

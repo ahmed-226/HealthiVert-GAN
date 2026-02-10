@@ -194,19 +194,29 @@ def process_datasets_to_excel(dataset_info, label_folder, fake_folder, output_fi
     df = pd.DataFrame(results)
     df.to_excel(output_file, index=False)
 
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Calculate RHLV Quantification')
+    parser.add_argument('--json_path', type=str, required=True, help='Path to vertebra_data.json')
+    parser.add_argument('--label_folder', type=str, required=True, help='Path to Ground Truth label folder')
+    parser.add_argument('--prediction_folder', type=str, required=True, help='Path to Generated Labels (label_fake folder)')
+    parser.add_argument('--output_excel', type=str, required=True, help='Path to save output Excel file')
+    parser.add_argument('--height_threshold', type=float, default=0.7, help='Height threshold for calc')
+    return parser.parse_args()
+
 def main():
-    with open('vertebra_data_local.json', 'r') as file:
+    args = parse_args()
+    
+    with open(args.json_path, 'r') as file:
        json_data = json.load(file)
     
-    label_folder = '/dssg/home/acct-milesun/zhangqi/Dataset/HealthiVert_straighten/label'
-    output_folder = '/dssg/home/acct-milesun/zhangqi/Project/HealthiVert-GAN_eval/output'
-    result_folder = '/dssg/home/acct-milesun/zhangqi/Project/HealthiVert-GAN_eval/evaluation/RHLV_quantification'
-    for root, dirs, files in os.walk(output_folder):
-        for dir in dirs:
-            exp_folder = os.path.join(root,dir)
-            fake_folder = os.path.join(exp_folder,'label_fake')
-            result_file = os.path.join(result_folder,dir+'.xlsx')
-            process_datasets_to_excel(json_data, label_folder, fake_folder, result_file, length_divisor=5, height_threshold=0.7)
+    output_dir = os.path.dirname(args.output_excel)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    process_datasets_to_excel(json_data, args.label_folder, args.prediction_folder, args.output_excel, length_divisor=5, height_threshold=args.height_threshold)
+    print(f"RHLV results saved to {args.output_excel}")
 
 if __name__ == "__main__":
     main()

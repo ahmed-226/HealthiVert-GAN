@@ -78,19 +78,27 @@ def evaluate_svm(filepath, features, output_txt='evaluation_results.txt'):
 
     print(f"Results saved to {output_txt}")
 
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='SVM Grading for Vertebral Fractures')
+    parser.add_argument('--rhlv_file', type=str, required=True, help='Path to RHLV Excel file')
+    parser.add_argument('--output_txt', type=str, required=True, help='Path to save analysis results (txt)')
+    return parser.parse_args()
+
 def main():
-    result_folder = 'evaluation/RHLV_quantification'
-    grading_folder = 'evaluation/classification_metric'
-    if not os.path.exists(grading_folder):
-        os.makedirs(grading_folder)
+    args = parse_args()
+    
+    output_dir = os.path.dirname(args.output_txt)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        
     features = ['Pre RHLV', 'Mid RHLV', 'Post RHLV']
-    for xlsx_file in os.listdir(result_folder):
-        #if xlsx_file != 'Exp_1_wo_straighten_sagittal.xlsx':
-        #    continue
-        xlsx_path = os.path.join(result_folder, xlsx_file)
-        xlsx_name = xlsx_file.split('.')[0]
-        saveTxT_path = os.path.join(grading_folder, xlsx_name + '.txt')
-        evaluate_svm(xlsx_path, features, saveTxT_path)
+    
+    if os.path.exists(args.rhlv_file):
+        evaluate_svm(args.rhlv_file, features, args.output_txt)
+    else:
+        print(f"Error: Input file {args.rhlv_file} does not exist.")
 
 if __name__ == "__main__":
     main()

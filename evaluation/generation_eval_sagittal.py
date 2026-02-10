@@ -105,61 +105,76 @@ def process_images(ori_ct_path, fake_ct_path, ori_seg_path, fake_seg_path):
 def average_metrics(lists):
     return np.mean(lists)
 
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Evaluate Generation Metrics (PSNR, SSIM, etc.)')
+    parser.add_argument('--ori_ct_folder', type=str, required=True, help='Path to Original CT folder')
+    parser.add_argument('--ori_seg_folder', type=str, required=True, help='Path to Original Label folder')
+    parser.add_argument('--fake_ct_folder', type=str, required=True, help='Path to Generated CT folder')
+    parser.add_argument('--fake_seg_folder', type=str, required=True, help='Path to Generated Label folder')
+    parser.add_argument('--json_path', type=str, required=True, help='Path to vertebra_data.json')
+    parser.add_argument('--output_txt', type=str, default='evaluation_metrics.txt', help='Path to save output metrics txt file')
+    return parser.parse_args()
+
 def main():
-    ori_ct_folder = '/dssg/home/acct-milesun/zhangqi/Dataset/HealthiVert_straighten/CT'
-    ori_seg_folder = '/dssg/home/acct-milesun/zhangqi/Dataset/HealthiVert_straighten/label'
-    json_path = 'vertebra_data.json'
-    save_folder = "evaluation/generation_metric"
-    output_folder = '/dssg/home/acct-milesun/zhangqi/Project/HealthiVert-GAN_eval/output'
-    with open(json_path, 'r') as file:
+    args = parse_args()
+    
+    with open(args.json_path, 'r') as file:
        vertebra_set = json.load(file)
+       
     val_normal_vert = []
-    for patient_vert_id in vertebra_set['val'].keys():
-        if int(vertebra_set['val'][patient_vert_id]) == 0:
-            val_normal_vert.append(patient_vert_id)
+    if 'val' in vertebra_set:
+        for patient_vert_id in vertebra_set['val'].keys():
+            if int(vertebra_set['val'][patient_vert_id]) == 0:
+                val_normal_vert.append(patient_vert_id)
+    else:
+         print("Warning: 'val' key not found in JSON. Using empty list for validation set filtering.")
 
-    if not os.path.exists(save_folder):
-        os.makedirs(save_folder)
+    out_dir = os.path.dirname(args.output_txt)
+    if out_dir and not os.path.exists(out_dir):
+        os.makedirs(out_dir)
         
-    for root, dirs, files in os.walk(output_folder):
-        for dir in dirs:
-            exp_folder = os.path.join(root,dir)
-            fake_seg_folder = os.path.join(exp_folder,'label_fake')
-            fake_ct_folder = os.path.join(exp_folder,'CT_fake')
+    metrics_lists = {'global_psnr': [], 'global_ssim': [], 'patch_psnr': [], 'patch_ssim': [], 'iou': [], 'rv_diff': [], 'dice':[]}
+    count=0
+    
+    for filename in os.listdir(args.ori_ct_folder):
+        if filename.endswith(".nii.gz") and (not val_normal_vert or filename[:-7] in val_normal_vert):
+            ori_ct_path = os.path.join(args.ori_ct_folder, filename)
+            fake_ct_path = os.path.join(args.fake_ct_folder, filename)
+            ori_seg_path = os.path.join(args.ori_seg_folder, filename)
+            fake_seg_path = os.path.join(args.fake_seg_folder, filename)
             
-            metrics_lists = {'global_psnr': [], 'global_ssim': [], 'patch_psnr': [], 'patch_ssim': [], 'iou': [], 'rv_diff': [], 'dice':[]}
-            count=0
-            for filename in os.listdir(ori_ct_folder):
+            if not (os.path.exists(fake_ct_path) and os.path.exists(fake_seg_path)):
+                print(f"Skipping {filename}: Generated files not found.")
+                continue
 
-                if filename.endswith(".nii.gz") and filename[:-7] in val_normal_vert:
-                    ori_ct_path = os.path.join(ori_ct_folder, filename)
-                    fake_ct_path = os.path.join(fake_ct_folder, filename)
-                    ori_seg_path = os.path.join(ori_seg_folder, filename)
-                    fake_seg_path = os.path.join(fake_seg_folder, filename)
-
-                    global_psnr, global_ssim, patch_psnr, patch_ssim, iou, rv_diff, dice = process_images(
-                        ori_ct_path, fake_ct_path, ori_seg_path, fake_seg_path)
-                    if math.isnan(patch_psnr) or math.isnan(patch_ssim):
-                        print("PSNR or SSIM returned NaN, skipping this set of images.")
-                        continue
-                    if patch_psnr==0 or patch_ssim==0:
-                        print("PSNR or SSIM returned 0, skipping this set of images.")
-                        continue
-                    metrics_lists['global_psnr'].append(global_psnr)
-                    metrics_lists['global_ssim'].append(global_ssim)
-                    metrics_lists['patch_psnr'].append(patch_psnr)
-                    metrics_lists['patch_ssim'].append(patch_ssim)
-                    metrics_lists['iou'].append(iou)
-                    metrics_lists['rv_diff'].append(rv_diff)
-                    metrics_lists['dice'].append(dice)
-                    count+=1
-
-            # 计算总平均
-            avg_metrics = {key: average_metrics(value) for key, value in metrics_lists.items()}
+            global_psnr, global_ssim, patch_psnr, patch_ssim, iou, rv_diff, dice = process_images(
+                ori_ct_path, fake_ct_path, ori_seg_path, fake_seg_path)
             
-            with open(os.path.join(save_folder,dir+".txt"), "w") as file:
-                for metric, value in avg_metrics.items():
-                    file.write(f"Average {metric.upper()}: {value}\n")
+            if math.isnan(patch_psnr) or math.isnan(patch_ssim):
+                print(f"{filename}: PSNR or SSIM returned NaN, skipping.")
+                continue
+            if patch_psnr==0 or patch_ssim==0:
+                print(f"{filename}: PSNR or SSIM returned 0, skipping.")
+                continue
+                
+            metrics_lists['global_psnr'].append(global_psnr)
+            metrics_lists['global_ssim'].append(global_ssim)
+            metrics_lists['patch_psnr'].append(patch_psnr)
+            metrics_lists['patch_ssim'].append(patch_ssim)
+            metrics_lists['iou'].append(iou)
+            metrics_lists['rv_diff'].append(rv_diff)
+            metrics_lists['dice'].append(dice)
+            count+=1
+
+    avg_metrics = {key: average_metrics(value) for key, value in metrics_lists.items()}
+    
+    print(f"Processed {count} files.")
+    with open(args.output_txt, "w") as file:
+        for metric, value in avg_metrics.items():
+            print(f"Average {metric.upper()}: {value}")
+            file.write(f"Average {metric.upper()}: {value}\n")
 
 if __name__ == "__main__":
     main()

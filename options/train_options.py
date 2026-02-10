@@ -36,6 +36,8 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--lr_policy', type=str, default='linear', help='learning rate policy. [linear | step | plateau | cosine]')
         parser.add_argument('--lr_decay_iters', type=int, default=50, help='multiply by a gamma every lr_decay_iters iterations')
         parser.add_argument('--vert_class', type=str, default="normal", help='input vert is normal or fructured')
+        parser.add_argument('--json_path', type=str, required=True, help='Path to vertebra_data.json')
+        parser.add_argument('--cam_folder', type=str, required=True, help='Path to attention heatmaps folder')
 
         self.isTrain = True
         return parser

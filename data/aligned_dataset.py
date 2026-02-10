@@ -46,20 +46,20 @@ class AlignedDataset(BaseDataset):
         BaseDataset.__init__(self, opt)
         
         # 读取json文件来选择训练集、测试集和验证集
-        with open('vertebra_data_local.json', 'r') as file:
-            vertebra_set = json.load(file)
+        with open(opt.json_path, 'r') as file:
+            vertebrae_set = json.load(file)
             self.normal_vert_list = []
             self.abnormal_vert_list = []
         # 初始化存储normal和abnormal vertebrae的字典
         self.normal_vert_dict = {}
         self.abnormal_vert_dict = {}
 
-        for patient_vert_id in vertebra_set[opt.phase].keys():
+        for patient_vert_id in vertebrae_set[opt.phase].keys():
         # 分离patient id和vert id
             patient_id, vert_id = patient_vert_id.rsplit('_',1)
         
         # 判断该vertebra是normal还是abnormal
-            if int(vertebra_set[opt.phase][patient_vert_id]) <= 1:
+            if int(vertebrae_set[opt.phase][patient_vert_id]) <= 1:
                 self.normal_vert_list.append(patient_vert_id)
             # 如果是normal，添加到normal_vert_dict
                 if patient_id not in self.normal_vert_dict:
@@ -159,7 +159,7 @@ class AlignedDataset(BaseDataset):
             B_paths (str) - - image paths (same as A_paths)
         """
         # read a image given a random integer index
-        CAM_folder = '/temp_data/zhangqi/datasets/HealthiVert_GAN/straighten_local/heatmap_CT'
+        CAM_folder = self.opt.cam_folder
 
         CAM_path_0 = os.path.join(CAM_folder, self.vertebra_id[index]+'_0.nii.gz')
         CAM_path_1 = os.path.join(CAM_folder, self.vertebra_id[index]+'_1.nii.gz')
